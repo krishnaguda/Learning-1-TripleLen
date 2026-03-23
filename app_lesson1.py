@@ -92,7 +92,19 @@ html, body, [class*="css"] { font-family: var(--font) !important; color: var(--t
 .model-pill small { font-size:0.6rem; color:var(--text-3); }
 
 /* ── Hero ── */
-.hero { padding:2.6rem 0 1.8rem; text-align:center; width:100%; display:flex; flex-direction:column; align-items:center; }
+.hero {
+  padding: 2.6rem 0 1.8rem;
+  text-align: center;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+/* Target Streamlit's div that wraps st.markdown so it doesn't break centering */
+[data-testid="stMarkdownContainer"]:has(.hero) {
+  width: 100%;
+  text-align: center;
+}
 .hero-tag {
   display:inline-flex; align-items:center; gap:0.4rem;
   background:rgba(139,92,246,0.1); border:1px solid rgba(139,92,246,0.25);
@@ -104,16 +116,22 @@ html, body, [class*="css"] { font-family: var(--font) !important; color: var(--t
   font-size:clamp(2.2rem,5vw,3.8rem) !important; font-weight:800 !important;
   letter-spacing:-0.05em !important; line-height:1 !important; margin:0 0 0.75rem !important;
   background:linear-gradient(135deg,#FFFFFF 0%,#C4B5FD 40%,#67E8F9 85%);
-  -webkit-background-clip:text !important; -webkit-text-fill-color:transparent !important; background-clip:text !important;
+  -webkit-background-clip:text !important; -webkit-text-fill-color:transparent !important;
+  background-clip:text !important;
   text-align:center !important; width:100%;
 }
-.hero-sub { font-size:0.92rem; color:var(--text-2); max-width:460px; margin:0 auto; line-height:1.6; text-align:center; }
-.hero-bar { width:46px; height:2px; background:linear-gradient(90deg,var(--accent),var(--llama4)); margin:1.3rem auto 0; border-radius:99px; }
-
-/* force Streamlit's main column to allow full-width centering */
-section[data-testid="stMain"] > div, .block-container > div:first-child {
-  display:flex; flex-direction:column; align-items:stretch;
+.hero-sub {
+  font-size:0.92rem; color:var(--text-2);
+  max-width:460px; width:100%;
+  margin:0 auto; line-height:1.6; text-align:center;
 }
+.hero-bar {
+  width:46px; height:2px;
+  background:linear-gradient(90deg,var(--accent),var(--llama4));
+  margin:1.3rem auto 0; border-radius:99px;
+}
+
+/* Remove the old flex override that was fighting centering */
 
 /* ── GREEN prompt textarea ── */
 .stTextArea textarea {
@@ -311,10 +329,13 @@ def run_all(prompt, sys_p, gkey, gqkey, temp, maxt):
     return res
 
 # ─── Session State ─────────────────────────────────────────────────────────────
-if "history"     not in st.session_state: st.session_state.history     = []
-if "prompt_text" not in st.session_state: st.session_state.prompt_text = ""
-if "gemini_key"  not in st.session_state: st.session_state.gemini_key  = ""
-if "groq_key"    not in st.session_state: st.session_state.groq_key    = ""
+if "history"       not in st.session_state: st.session_state.history       = []
+if "prompt_text"   not in st.session_state: st.session_state.prompt_text   = ""
+if "gemini_key"    not in st.session_state: st.session_state.gemini_key    = ""
+if "groq_key"      not in st.session_state: st.session_state.groq_key      = ""
+if "temperature"   not in st.session_state: st.session_state.temperature   = 0.7
+if "max_tokens"    not in st.session_state: st.session_state.max_tokens    = 1024
+if "load_template" not in st.session_state: st.session_state.load_template = None
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -334,8 +355,8 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown('<div class="sb-section">Generation</div>', unsafe_allow_html=True)
-    temperature = st.slider("Temperature", 0.0, 1.0, 0.7, 0.05)
-    max_tokens  = st.slider("Max Tokens",  100, 4000, 1024, 50)
+    temperature = st.slider("Temperature", 0.0, 1.0, 0.7, 0.05, key="temperature")
+    max_tokens  = st.slider("Max Tokens",  100, 4000, 1024, 50,  key="max_tokens")
 
     st.markdown("---")
     st.markdown('<div class="sb-section">Active Models</div>', unsafe_allow_html=True)
@@ -347,9 +368,11 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-# ─── Resolve API keys from session state (persists across reruns / sidebar toggles) ───
-gemini_key = st.session_state.gemini_key
-groq_key   = st.session_state.groq_key
+# ─── Resolve sidebar values from session state (always available, even when sidebar is collapsed) ───
+gemini_key  = st.session_state.gemini_key
+groq_key    = st.session_state.groq_key
+temperature = st.session_state.temperature
+max_tokens  = st.session_state.max_tokens
 
 # ─── Hero ──────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -374,8 +397,7 @@ with st.expander("📋 Prompt Templates", expanded=False):
     tc = st.columns(len(TEMPLATES))
     for i, (label, text) in enumerate(TEMPLATES.items()):
         if tc[i].button(label, key=f"t{i}"):
-            st.session_state.prompt_text = text
-            st.session_state["main_p"]   = text  # directly update the textarea widget state
+            st.session_state.load_template = text
             st.rerun()
 
 # ─── System Prompt ─────────────────────────────────────────────────────────────
@@ -388,7 +410,12 @@ with st.expander("⚙️ System Prompt (optional)", expanded=False):
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ─── Prompt Input ──────────────────────────────────────────────────────────────
-# Ensure the textarea widget state is initialized from prompt_text
+# Apply any pending template selection BEFORE the widget is created
+if st.session_state.load_template is not None:
+    st.session_state["main_p"]         = st.session_state.load_template
+    st.session_state.prompt_text       = st.session_state.load_template
+    st.session_state.load_template     = None
+
 if "main_p" not in st.session_state:
     st.session_state["main_p"] = st.session_state.prompt_text
 
