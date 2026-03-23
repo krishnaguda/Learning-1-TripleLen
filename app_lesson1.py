@@ -273,7 +273,7 @@ def call_gemini(prompt, system_prompt, api_key, temperature, max_tokens):
         client = genai.Client(api_key=api_key)
         full = f"{system_prompt.strip()}\n\n{prompt}" if system_prompt.strip() else prompt
         resp = client.models.generate_content(
-            model="gemini-2.5-flash-preview-04-17",
+            model="gemini-3.1-pro-preview",
             contents=full,
             config=types.GenerateContentConfig(temperature=temperature, max_output_tokens=max_tokens),
         )
@@ -341,7 +341,7 @@ with st.sidebar:
     st.markdown('<div class="sb-section">Active Models</div>', unsafe_allow_html=True)
     st.markdown(f"""
     <div class="model-list">
-      <div class="model-pill"><span class="mp-dot mp-g"></span><span><b>Gemini 2.5 Flash</b><br><small>Google · {'✓ ready' if gemini_key else 'key needed'}</small></span></div>
+      <div class="model-pill"><span class="mp-dot mp-g"></span><span><b>Gemini 3.1 Pro</b><br><small>Google · {'✓ ready' if gemini_key else 'key needed'}</small></span></div>
       <div class="model-pill"><span class="mp-dot mp-l3"></span><span><b>Llama 3.3 · 70B</b><br><small>Meta / Groq · {'✓ ready' if groq_key else 'key needed'}</small></span></div>
       <div class="model-pill"><span class="mp-dot mp-l4"></span><span><b>Llama 4 Scout · 17B</b><br><small>Meta / Groq · {'✓ ready' if groq_key else 'key needed'}</small></span></div>
     </div>
@@ -356,7 +356,7 @@ st.markdown("""
 <div class="hero">
   <div class="hero-tag">✦ Parallel AI Inference</div>
   <h1>🔍 TripleLensLearning</h1>
-  <p class="hero-sub">One prompt. Three minds. Side-by-side comparison of Gemini 2.5, Llama 3.3, and Llama 4 Scout — all in real time.</p>
+  <p class="hero-sub">One prompt. Three minds. Side-by-side comparison of Gemini 3.1 Pro, Llama 3.3, and Llama 4 Scout — all in real time.</p>
   <div class="hero-bar"></div>
 </div>
 """, unsafe_allow_html=True)
@@ -426,7 +426,7 @@ if compare:
 
 # ─── Model Config ──────────────────────────────────────────────────────────────
 MODELS = [
-    {"key": "gemini",  "label": "Gemini 2.5 Flash", "prov": "Google",        "cls": "bg-gem", "miss": "Add Gemini key to enable"},
+    {"key": "gemini",  "label": "Gemini 3.1 Pro", "prov": "Google",        "cls": "bg-gem", "miss": "Add Gemini key to enable"},
     {"key": "llama33", "label": "Llama 3.3 · 70B",  "prov": "Meta via Groq", "cls": "bg-l33", "miss": "Add Groq key to enable"},
     {"key": "llama4",  "label": "Llama 4 Scout·17B","prov": "Meta via Groq", "cls": "bg-l4",  "miss": "Add Groq key to enable"},
 ]
