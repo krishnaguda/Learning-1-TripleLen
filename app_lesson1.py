@@ -92,7 +92,7 @@ html, body, [class*="css"] { font-family: var(--font) !important; color: var(--t
 .model-pill small { font-size:0.6rem; color:var(--text-3); }
 
 /* ── Hero ── */
-.hero { padding:2.6rem 0 1.8rem; text-align:center; }
+.hero { padding:2.6rem 0 1.8rem; text-align:center; width:100%; display:flex; flex-direction:column; align-items:center; }
 .hero-tag {
   display:inline-flex; align-items:center; gap:0.4rem;
   background:rgba(139,92,246,0.1); border:1px solid rgba(139,92,246,0.25);
@@ -105,9 +105,15 @@ html, body, [class*="css"] { font-family: var(--font) !important; color: var(--t
   letter-spacing:-0.05em !important; line-height:1 !important; margin:0 0 0.75rem !important;
   background:linear-gradient(135deg,#FFFFFF 0%,#C4B5FD 40%,#67E8F9 85%);
   -webkit-background-clip:text !important; -webkit-text-fill-color:transparent !important; background-clip:text !important;
+  text-align:center !important; width:100%;
 }
-.hero-sub { font-size:0.92rem; color:var(--text-2); max-width:460px; margin:0 auto; line-height:1.6; }
+.hero-sub { font-size:0.92rem; color:var(--text-2); max-width:460px; margin:0 auto; line-height:1.6; text-align:center; }
 .hero-bar { width:46px; height:2px; background:linear-gradient(90deg,var(--accent),var(--llama4)); margin:1.3rem auto 0; border-radius:99px; }
+
+/* force Streamlit's main column to allow full-width centering */
+section[data-testid="stMain"] > div, .block-container > div:first-child {
+  display:flex; flex-direction:column; align-items:stretch;
+}
 
 /* ── GREEN prompt textarea ── */
 .stTextArea textarea {
@@ -267,7 +273,7 @@ def call_gemini(prompt, system_prompt, api_key, temperature, max_tokens):
         client = genai.Client(api_key=api_key)
         full = f"{system_prompt.strip()}\n\n{prompt}" if system_prompt.strip() else prompt
         resp = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash-preview-04-17",
             contents=full,
             config=types.GenerateContentConfig(temperature=temperature, max_output_tokens=max_tokens),
         )
@@ -307,6 +313,8 @@ def run_all(prompt, sys_p, gkey, gqkey, temp, maxt):
 # ─── Session State ─────────────────────────────────────────────────────────────
 if "history"     not in st.session_state: st.session_state.history     = []
 if "prompt_text" not in st.session_state: st.session_state.prompt_text = ""
+if "gemini_key"  not in st.session_state: st.session_state.gemini_key  = ""
+if "groq_key"    not in st.session_state: st.session_state.groq_key    = ""
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -321,8 +329,8 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown('<div class="sb-section">API Keys</div>', unsafe_allow_html=True)
-    gemini_key = st.text_input("Gemini API Key", type="password", placeholder="AIza...",  help="Google AI Studio — free tier")
-    groq_key   = st.text_input("Groq API Key",   type="password", placeholder="gsk_...",  help="Covers Llama 3.3 & Llama 4 — free tier")
+    gemini_key = st.text_input("Gemini API Key", type="password", placeholder="AIza...",  help="Google AI Studio — free tier", key="gemini_key")
+    groq_key   = st.text_input("Groq API Key",   type="password", placeholder="gsk_...",  help="Covers Llama 3.3 & Llama 4 — free tier", key="groq_key")
 
     st.markdown("---")
     st.markdown('<div class="sb-section">Generation</div>', unsafe_allow_html=True)
@@ -333,18 +341,22 @@ with st.sidebar:
     st.markdown('<div class="sb-section">Active Models</div>', unsafe_allow_html=True)
     st.markdown(f"""
     <div class="model-list">
-      <div class="model-pill"><span class="mp-dot mp-g"></span><span><b>Gemini 2.0 Flash</b><br><small>Google · {'✓ ready' if gemini_key else 'key needed'}</small></span></div>
+      <div class="model-pill"><span class="mp-dot mp-g"></span><span><b>Gemini 2.5 Flash</b><br><small>Google · {'✓ ready' if gemini_key else 'key needed'}</small></span></div>
       <div class="model-pill"><span class="mp-dot mp-l3"></span><span><b>Llama 3.3 · 70B</b><br><small>Meta / Groq · {'✓ ready' if groq_key else 'key needed'}</small></span></div>
       <div class="model-pill"><span class="mp-dot mp-l4"></span><span><b>Llama 4 Scout · 17B</b><br><small>Meta / Groq · {'✓ ready' if groq_key else 'key needed'}</small></span></div>
     </div>
     """, unsafe_allow_html=True)
+
+# ─── Resolve API keys from session state (persists across reruns / sidebar toggles) ───
+gemini_key = st.session_state.gemini_key
+groq_key   = st.session_state.groq_key
 
 # ─── Hero ──────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="hero">
   <div class="hero-tag">✦ Parallel AI Inference</div>
   <h1>🔍 TripleLensLearning</h1>
-  <p class="hero-sub">One prompt. Three minds. Side-by-side comparison of Gemini, Llama 3.3, and Llama 4 Scout — all in real time.</p>
+  <p class="hero-sub">One prompt. Three minds. Side-by-side comparison of Gemini 2.5, Llama 3.3, and Llama 4 Scout — all in real time.</p>
   <div class="hero-bar"></div>
 </div>
 """, unsafe_allow_html=True)
@@ -363,6 +375,7 @@ with st.expander("📋 Prompt Templates", expanded=False):
     for i, (label, text) in enumerate(TEMPLATES.items()):
         if tc[i].button(label, key=f"t{i}"):
             st.session_state.prompt_text = text
+            st.session_state["main_p"]   = text  # directly update the textarea widget state
             st.rerun()
 
 # ─── System Prompt ─────────────────────────────────────────────────────────────
@@ -375,11 +388,15 @@ with st.expander("⚙️ System Prompt (optional)", expanded=False):
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ─── Prompt Input ──────────────────────────────────────────────────────────────
-prompt = st.text_area("Prompt", value=st.session_state.prompt_text, height=130,
+# Ensure the textarea widget state is initialized from prompt_text
+if "main_p" not in st.session_state:
+    st.session_state["main_p"] = st.session_state.prompt_text
+
+prompt = st.text_area("Prompt", height=130,
     placeholder="Type your question here — sent to all three models simultaneously…",
     label_visibility="collapsed", key="main_p")
-if prompt != st.session_state.prompt_text:
-    st.session_state.prompt_text = prompt
+# Keep prompt_text in sync with any manual edits
+st.session_state.prompt_text = prompt
 
 bc, sc = st.columns([1, 5])
 with bc:
@@ -409,7 +426,7 @@ if compare:
 
 # ─── Model Config ──────────────────────────────────────────────────────────────
 MODELS = [
-    {"key": "gemini",  "label": "Gemini 2.0 Flash", "prov": "Google",        "cls": "bg-gem", "miss": "Add Gemini key to enable"},
+    {"key": "gemini",  "label": "Gemini 2.5 Flash", "prov": "Google",        "cls": "bg-gem", "miss": "Add Gemini key to enable"},
     {"key": "llama33", "label": "Llama 3.3 · 70B",  "prov": "Meta via Groq", "cls": "bg-l33", "miss": "Add Groq key to enable"},
     {"key": "llama4",  "label": "Llama 4 Scout·17B","prov": "Meta via Groq", "cls": "bg-l4",  "miss": "Add Groq key to enable"},
 ]
