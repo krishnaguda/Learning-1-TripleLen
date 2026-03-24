@@ -11,6 +11,23 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ─── Session State (MUST come before any widget) ───────────────────────────────
+# FIX 1 (sidebar): temperature & max_tokens must live in session_state so they
+#   are always defined, even when the sidebar is collapsed and its widget code
+#   is skipped. Without this, Python raises NameError → Streamlit crashes →
+#   sidebar never recovers, even on page refresh.
+# FIX 2 (templates): _tpl_pending is a neutral staging key. The template
+#   button sets it and calls st.rerun(). On the next run we write it into
+#   "main_p" BEFORE st.text_area() is called — the only moment Streamlit will
+#   honour an externally-set widget value.
+if "history"      not in st.session_state: st.session_state.history      = []
+if "gemini_key"   not in st.session_state: st.session_state.gemini_key   = ""
+if "groq_key"     not in st.session_state: st.session_state.groq_key     = ""
+if "temperature"  not in st.session_state: st.session_state.temperature  = 0.7
+if "max_tokens"   not in st.session_state: st.session_state.max_tokens   = 1024
+if "_tpl_pending" not in st.session_state: st.session_state._tpl_pending = None
+if "main_p"       not in st.session_state: st.session_state.main_p       = ""
+
 # ─── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -91,19 +108,22 @@ html, body, [class*="css"] { font-family: var(--font) !important; color: var(--t
 .model-pill b { color:var(--text-1); font-weight:600; }
 .model-pill small { font-size:0.6rem; color:var(--text-3); }
 
-/* ── Hero ── */
-/* Make the Streamlit markdown wrapper that contains .hero go full-width */
-[data-testid="stMarkdownContainer"]:has(.hero) {
-  width: 100% !important;
-  display: block !important;
+/* ── Hero ──
+   FIX 3: st.markdown() wraps its output in a div that doesn't stretch to
+   full width by default. We target it via its parent testid relationship,
+   force it to 100% width, then let .hero flex-center its children.
+   The old approach targeted section/block-container which broke other things.
+*/
+[data-testid="stVerticalBlock"] > [data-testid="stMarkdownContainer"] {
+  width: 100%;
 }
 .hero {
   padding: 2.6rem 0 1.8rem;
-  text-align: center;
   width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
+  text-align: center;
 }
 .hero-tag {
   display:inline-flex; align-items:center; gap:0.4rem;
@@ -117,13 +137,17 @@ html, body, [class*="css"] { font-family: var(--font) !important; color: var(--t
   letter-spacing:-0.05em !important; line-height:1 !important; margin:0 0 0.75rem !important;
   background:linear-gradient(135deg,#FFFFFF 0%,#C4B5FD 40%,#67E8F9 85%);
   -webkit-background-clip:text !important; -webkit-text-fill-color:transparent !important;
-  background-clip:text !important; text-align:center !important; width:100%;
+  background-clip:text !important;
 }
 .hero-sub {
   font-size:0.92rem; color:var(--text-2); max-width:460px;
   margin:0 auto; line-height:1.6; text-align:center;
 }
-.hero-bar { width:46px; height:2px; background:linear-gradient(90deg,var(--accent),var(--llama4)); margin:1.3rem auto 0; border-radius:99px; }
+.hero-bar {
+  width:46px; height:2px;
+  background:linear-gradient(90deg,var(--accent),var(--llama4));
+  margin:1.3rem auto 0; border-radius:99px;
+}
 
 /* ── GREEN prompt textarea ── */
 .stTextArea textarea {
@@ -283,7 +307,7 @@ def call_gemini(prompt, system_prompt, api_key, temperature, max_tokens):
         client = genai.Client(api_key=api_key)
         full = f"{system_prompt.strip()}\n\n{prompt}" if system_prompt.strip() else prompt
         resp = client.models.generate_content(
-            model="gemini-3.1-pro-preview",
+            model="gemini-2.0-flash",
             contents=full,
             config=types.GenerateContentConfig(temperature=temperature, max_output_tokens=max_tokens),
         )
@@ -302,7 +326,8 @@ def call_groq(model_id, prompt, system_prompt, api_key, temperature, max_tokens)
         if system_prompt.strip():
             msgs.append({"role": "system", "content": system_prompt.strip()})
         msgs.append({"role": "user", "content": prompt})
-        resp = client.chat.completions.create(model=model_id, max_tokens=max_tokens, temperature=temperature, messages=msgs)
+        resp = client.chat.completions.create(model=model_id, max_tokens=max_tokens,
+                                              temperature=temperature, messages=msgs)
         return {"text": resp.choices[0].message.content, "tokens_in": resp.usage.prompt_tokens,
                 "tokens_out": resp.usage.completion_tokens, "time": time.time()-t0, "error": None}
     except Exception as e:
@@ -314,22 +339,18 @@ def run_all(prompt, sys_p, gkey, gqkey, temp, maxt):
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
         futs = {}
         if gkey:  futs["gemini"]  = ex.submit(call_gemini, prompt, sys_p, gkey, temp, maxt)
-        if gqkey: futs["llama33"] = ex.submit(call_groq, "llama-3.3-70b-versatile", prompt, sys_p, gqkey, temp, maxt)
-        if gqkey: futs["llama4"]  = ex.submit(call_groq, "meta-llama/llama-4-scout-17b-16e-instruct", prompt, sys_p, gqkey, temp, maxt)
+        if gqkey: futs["llama33"] = ex.submit(call_groq, "llama-3.3-70b-versatile",
+                                               prompt, sys_p, gqkey, temp, maxt)
+        if gqkey: futs["llama4"]  = ex.submit(call_groq, "meta-llama/llama-4-scout-17b-16e-instruct",
+                                               prompt, sys_p, gqkey, temp, maxt)
         for k, f in futs.items():
             res[k] = f.result()
     return res
 
-# ─── Session State ─────────────────────────────────────────────────────────────
-if "history"           not in st.session_state: st.session_state.history           = []
-if "prompt_text"       not in st.session_state: st.session_state.prompt_text       = ""
-if "gemini_key"        not in st.session_state: st.session_state.gemini_key        = ""
-if "groq_key"          not in st.session_state: st.session_state.groq_key          = ""
-if "temperature"       not in st.session_state: st.session_state.temperature       = 0.7
-if "max_tokens"        not in st.session_state: st.session_state.max_tokens        = 1024
-if "_pending_template" not in st.session_state: st.session_state._pending_template = None
-
-# ─── Sidebar ──────────────────────────────────────────────────────────────────
+# ─── Sidebar ───────────────────────────────────────────────────────────────────
+# FIX 1: Every widget has key= so its value is stored in session_state.
+# We never use the return value of these widgets directly — instead we read
+# from session_state below, which always exists even when sidebar is hidden.
 with st.sidebar:
     st.markdown("""
     <div class="sb-brand">
@@ -342,27 +363,29 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown('<div class="sb-section">API Keys</div>', unsafe_allow_html=True)
-    gemini_key = st.text_input("Gemini API Key", type="password", placeholder="AIza...",  help="Google AI Studio — free tier", key="gemini_key")
-    groq_key   = st.text_input("Groq API Key",   type="password", placeholder="gsk_...",  help="Covers Llama 3.3 & Llama 4 — free tier", key="groq_key")
+    st.text_input("Gemini API Key", type="password", placeholder="AIza...",
+                  help="Google AI Studio — free tier", key="gemini_key")
+    st.text_input("Groq API Key",   type="password", placeholder="gsk_...",
+                  help="Covers Llama 3.3 & Llama 4 — free tier", key="groq_key")
 
     st.markdown("---")
     st.markdown('<div class="sb-section">Generation</div>', unsafe_allow_html=True)
-    temperature = st.slider("Temperature", 0.0, 1.0, 0.7, 0.05, key="temperature")
-    max_tokens  = st.slider("Max Tokens",  100, 4000, 1024, 50,  key="max_tokens")
+    st.slider("Temperature", 0.0, 1.0, 0.7, 0.05, key="temperature")
+    st.slider("Max Tokens",  100, 4000, 1024, 50,  key="max_tokens")
 
     st.markdown("---")
     st.markdown('<div class="sb-section">Active Models</div>', unsafe_allow_html=True)
+    _gk = st.session_state.gemini_key
+    _qk = st.session_state.groq_key
     st.markdown(f"""
     <div class="model-list">
-      <div class="model-pill"><span class="mp-dot mp-g"></span><span><b>Gemini 3.1 Pro</b><br><small>Google · {'✓ ready' if gemini_key else 'key needed'}</small></span></div>
-      <div class="model-pill"><span class="mp-dot mp-l3"></span><span><b>Llama 3.3 · 70B</b><br><small>Meta / Groq · {'✓ ready' if groq_key else 'key needed'}</small></span></div>
-      <div class="model-pill"><span class="mp-dot mp-l4"></span><span><b>Llama 4 Scout · 17B</b><br><small>Meta / Groq · {'✓ ready' if groq_key else 'key needed'}</small></span></div>
+      <div class="model-pill"><span class="mp-dot mp-g"></span><span><b>Gemini 2.0 Flash</b><br><small>Google · {'✓ ready' if _gk else 'key needed'}</small></span></div>
+      <div class="model-pill"><span class="mp-dot mp-l3"></span><span><b>Llama 3.3 · 70B</b><br><small>Meta / Groq · {'✓ ready' if _qk else 'key needed'}</small></span></div>
+      <div class="model-pill"><span class="mp-dot mp-l4"></span><span><b>Llama 4 Scout · 17B</b><br><small>Meta / Groq · {'✓ ready' if _qk else 'key needed'}</small></span></div>
     </div>
     """, unsafe_allow_html=True)
 
-# ─── Resolve sidebar values from session state ────────────────────────────────
-# All four values live in session_state so they're always defined even when
-# the sidebar is collapsed and its widget code doesn't execute.
+# Read all sidebar values from session_state — safe whether sidebar ran or not
 gemini_key  = st.session_state.gemini_key
 groq_key    = st.session_state.groq_key
 temperature = st.session_state.temperature
@@ -373,7 +396,7 @@ st.markdown("""
 <div class="hero">
   <div class="hero-tag">✦ Parallel AI Inference</div>
   <h1>🔍 TripleLensLearning</h1>
-  <p class="hero-sub">One prompt. Three minds. Side-by-side comparison of Gemini 3.1 Pro, Llama 3.3, and Llama 4 Scout — all in real time.</p>
+  <p class="hero-sub">One prompt. Three minds. Side-by-side comparison of Gemini, Llama 3.3, and Llama 4 Scout — all in real time.</p>
   <div class="hero-bar"></div>
 </div>
 """, unsafe_allow_html=True)
@@ -387,12 +410,12 @@ TEMPLATES = {
     "📚 Research": "Summarize the strongest arguments for and against universal basic income with key evidence.",
 }
 
+# FIX 2 (part A): store chosen text in staging key, then rerun.
 with st.expander("📋 Prompt Templates", expanded=False):
     tc = st.columns(len(TEMPLATES))
     for i, (label, text) in enumerate(TEMPLATES.items()):
         if tc[i].button(label, key=f"t{i}"):
-            # Store in a staging key; we apply it to the widget BEFORE it renders below
-            st.session_state._pending_template = text
+            st.session_state._tpl_pending = text
             st.rerun()
 
 # ─── System Prompt ─────────────────────────────────────────────────────────────
@@ -405,27 +428,26 @@ with st.expander("⚙️ System Prompt (optional)", expanded=False):
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ─── Prompt Input ──────────────────────────────────────────────────────────────
-# If a template was just chosen, inject it into the widget key BEFORE st.text_area
-# creates the widget. Streamlit reads session_state["main_p"] at instantiation time,
-# so this is the only moment the value can be overridden programmatically.
-if st.session_state._pending_template is not None:
-    st.session_state["main_p"]         = st.session_state._pending_template
-    st.session_state.prompt_text       = st.session_state._pending_template
-    st.session_state._pending_template = None
+# FIX 2 (part B): apply the pending template into "main_p" RIGHT NOW, before
+# st.text_area() is called. Streamlit reads session_state["main_p"] at widget
+# creation time; writing to it after the widget is registered has no effect.
+if st.session_state._tpl_pending is not None:
+    st.session_state.main_p       = st.session_state._tpl_pending
+    st.session_state._tpl_pending = None
 
-if "main_p" not in st.session_state:
-    st.session_state["main_p"] = st.session_state.prompt_text
-
-prompt = st.text_area("Prompt", height=130,
+prompt = st.text_area(
+    "Prompt",
+    height=130,
     placeholder="Type your question here — sent to all three models simultaneously…",
-    label_visibility="collapsed", key="main_p")
-st.session_state.prompt_text = prompt
+    label_visibility="collapsed",
+    key="main_p",
+)
 
 bc, sc = st.columns([1, 5])
 with bc:
     compare = st.button("⚡  Compare Models", use_container_width=True)
 with sc:
-    n = (1 if gemini_key else 0) + (2 if groq_key else 0)
+    n  = (1 if gemini_key else 0) + (2 if groq_key else 0)
     g  = f'<span class="st-pill"><span class="sp-d {"sp-on" if gemini_key else "sp-off"}"></span>Gemini</span>'
     l3 = f'<span class="st-pill"><span class="sp-d {"sp-on" if groq_key  else "sp-off"}"></span>Llama 3.3</span>'
     l4 = f'<span class="st-pill"><span class="sp-d {"sp-on" if groq_key  else "sp-off"}"></span>Llama 4</span>'
@@ -440,18 +462,23 @@ if compare:
         st.error("Add at least one API key in the sidebar.")
     else:
         with st.spinner("Querying models in parallel…"):
-            results = run_all(prompt, system_prompt, gemini_key or "", groq_key or "", temperature, max_tokens)
+            results = run_all(prompt, system_prompt, gemini_key or "", groq_key or "",
+                              temperature, max_tokens)
         st.session_state["last_results"] = results
         st.session_state["last_prompt"]  = prompt
-        st.session_state.history.insert(0, {"prompt": prompt, "timestamp": datetime.now().strftime("%H:%M · %b %d"), "models": list(results.keys())})
+        st.session_state.history.insert(0, {
+            "prompt": prompt,
+            "timestamp": datetime.now().strftime("%H:%M · %b %d"),
+            "models": list(results.keys()),
+        })
         if len(st.session_state.history) > 20:
             st.session_state.history = st.session_state.history[:20]
 
 # ─── Model Config ──────────────────────────────────────────────────────────────
 MODELS = [
-    {"key": "gemini",  "label": "Gemini 3.1 Pro", "prov": "Google",        "cls": "bg-gem", "miss": "Add Gemini key to enable"},
-    {"key": "llama33", "label": "Llama 3.3 · 70B",  "prov": "Meta via Groq", "cls": "bg-l33", "miss": "Add Groq key to enable"},
-    {"key": "llama4",  "label": "Llama 4 Scout·17B","prov": "Meta via Groq", "cls": "bg-l4",  "miss": "Add Groq key to enable"},
+    {"key": "gemini",  "label": "Gemini 2.0 Flash",   "prov": "Google",        "cls": "bg-gem", "miss": "Add Gemini key to enable"},
+    {"key": "llama33", "label": "Llama 3.3 · 70B",    "prov": "Meta via Groq", "cls": "bg-l33", "miss": "Add Groq key to enable"},
+    {"key": "llama4",  "label": "Llama 4 Scout · 17B","prov": "Meta via Groq", "cls": "bg-l4",  "miss": "Add Groq key to enable"},
 ]
 
 # ─── Results ───────────────────────────────────────────────────────────────────
@@ -471,7 +498,10 @@ if "last_results" in st.session_state:
             if m["key"] in res:
                 r = res[m["key"]]
                 if r["error"]:
-                    st.markdown(f'<div class="r-card"><div class="r-err">⚠ {r["error"]}</div><div class="stats"><span class="sc">⏱ <b>{r["time"]:.2f}s</b></span></div></div>', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div class="r-card"><div class="r-err">⚠ {r["error"]}</div>'
+                        f'<div class="stats"><span class="sc">⏱ <b>{r["time"]:.2f}s</b></span></div></div>',
+                        unsafe_allow_html=True)
                 else:
                     w = len(r["text"].split()) if r["text"] else 0
                     st.markdown(f"""
@@ -485,12 +515,14 @@ if "last_results" in st.session_state:
                       </div>
                     </div>""", unsafe_allow_html=True)
             else:
-                ok = gemini_key if m["key"] == "gemini" else groq_key
+                ok   = gemini_key if m["key"] == "gemini" else groq_key
                 icon = "🔒" if not ok else "◈"
                 msg  = m["miss"] if not ok else "Submit a prompt to see response"
-                st.markdown(f'<div class="r-card"><div class="r-ph"><span class="pi">{icon}</span><span>{msg}</span></div></div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="r-card"><div class="r-ph"><span class="pi">{icon}</span>'
+                    f'<span>{msg}</span></div></div>',
+                    unsafe_allow_html=True)
 
-    # Metrics
     valid = {k: v for k, v in res.items() if not v.get("error") and v.get("text")}
     if valid:
         st.markdown('<div class="met-label">⬡ Comparison Metrics</div>', unsafe_allow_html=True)
@@ -499,7 +531,9 @@ if "last_results" in st.session_state:
             with col:
                 k = m["key"]
                 if k in valid:
-                    r = valid[k]; tps = int(r["tokens_out"]/r["time"]) if r["time"] else 0; w = len(r["text"].split())
+                    r   = valid[k]
+                    tps = int(r["tokens_out"] / r["time"]) if r["time"] else 0
+                    w   = len(r["text"].split())
                     st.metric(m["label"], f"{r['time']:.2f}s", f"{tps} tok/s · {w} words")
                 else:
                     st.metric(m["label"], "—", "Not available")
@@ -507,7 +541,7 @@ if "last_results" in st.session_state:
 else:
     for col, m in zip(COLS, MODELS):
         with col:
-            ok = gemini_key if m["key"] == "gemini" else groq_key
+            ok   = gemini_key if m["key"] == "gemini" else groq_key
             icon = "🔒" if not ok else "◈"
             msg  = m["miss"] if not ok else "Submit a prompt to see response"
             st.markdown(f"""
@@ -515,7 +549,8 @@ else:
               <span class="b-dot"></span>
               <div><div style="font-weight:700">{m['label']}</div><div class="bd">{m['prov']}</div></div>
             </div>
-            <div class="r-card"><div class="r-ph"><span class="pi">{icon}</span><span>{msg}</span></div></div>""", unsafe_allow_html=True)
+            <div class="r-card"><div class="r-ph"><span class="pi">{icon}</span><span>{msg}</span></div></div>""",
+            unsafe_allow_html=True)
 
 # ─── History ──────────────────────────────────────────────────────────────────
 if st.session_state.history:
@@ -523,7 +558,12 @@ if st.session_state.history:
     with st.expander(f"🕘 Session History ({len(st.session_state.history)} queries)", expanded=False):
         for item in st.session_state.history:
             tags = " · ".join(item["models"])
-            st.markdown(f'<div class="h-item"><div class="h-p">{item["prompt"][:130]}{"…" if len(item["prompt"])>130 else ""}</div><div class="h-m">{item["timestamp"]} · {tags}</div></div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="h-item">'
+                f'<div class="h-p">{item["prompt"][:130]}{"…" if len(item["prompt"])>130 else ""}</div>'
+                f'<div class="h-m">{item["timestamp"]} · {tags}</div>'
+                f'</div>',
+                unsafe_allow_html=True)
         if st.button("🗑 Clear History", key="clr"):
             st.session_state.history = []
             st.rerun()
