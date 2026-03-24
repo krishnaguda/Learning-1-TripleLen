@@ -92,6 +92,11 @@ html, body, [class*="css"] { font-family: var(--font) !important; color: var(--t
 .model-pill small { font-size:0.6rem; color:var(--text-3); }
 
 /* ── Hero ── */
+/* Make the Streamlit markdown wrapper that contains .hero go full-width */
+[data-testid="stMarkdownContainer"]:has(.hero) {
+  width: 100% !important;
+  display: block !important;
+}
 .hero {
   padding: 2.6rem 0 1.8rem;
   text-align: center;
@@ -99,11 +104,6 @@ html, body, [class*="css"] { font-family: var(--font) !important; color: var(--t
   display: flex;
   flex-direction: column;
   align-items: center;
-}
-/* Target Streamlit's div that wraps st.markdown so it doesn't break centering */
-[data-testid="stMarkdownContainer"]:has(.hero) {
-  width: 100%;
-  text-align: center;
 }
 .hero-tag {
   display:inline-flex; align-items:center; gap:0.4rem;
@@ -117,21 +117,13 @@ html, body, [class*="css"] { font-family: var(--font) !important; color: var(--t
   letter-spacing:-0.05em !important; line-height:1 !important; margin:0 0 0.75rem !important;
   background:linear-gradient(135deg,#FFFFFF 0%,#C4B5FD 40%,#67E8F9 85%);
   -webkit-background-clip:text !important; -webkit-text-fill-color:transparent !important;
-  background-clip:text !important;
-  text-align:center !important; width:100%;
+  background-clip:text !important; text-align:center !important; width:100%;
 }
 .hero-sub {
-  font-size:0.92rem; color:var(--text-2);
-  max-width:460px; width:100%;
+  font-size:0.92rem; color:var(--text-2); max-width:460px;
   margin:0 auto; line-height:1.6; text-align:center;
 }
-.hero-bar {
-  width:46px; height:2px;
-  background:linear-gradient(90deg,var(--accent),var(--llama4));
-  margin:1.3rem auto 0; border-radius:99px;
-}
-
-/* Remove the old flex override that was fighting centering */
+.hero-bar { width:46px; height:2px; background:linear-gradient(90deg,var(--accent),var(--llama4)); margin:1.3rem auto 0; border-radius:99px; }
 
 /* ── GREEN prompt textarea ── */
 .stTextArea textarea {
@@ -329,13 +321,13 @@ def run_all(prompt, sys_p, gkey, gqkey, temp, maxt):
     return res
 
 # ─── Session State ─────────────────────────────────────────────────────────────
-if "history"       not in st.session_state: st.session_state.history       = []
-if "prompt_text"   not in st.session_state: st.session_state.prompt_text   = ""
-if "gemini_key"    not in st.session_state: st.session_state.gemini_key    = ""
-if "groq_key"      not in st.session_state: st.session_state.groq_key      = ""
-if "temperature"   not in st.session_state: st.session_state.temperature   = 0.7
-if "max_tokens"    not in st.session_state: st.session_state.max_tokens    = 1024
-if "load_template" not in st.session_state: st.session_state.load_template = None
+if "history"           not in st.session_state: st.session_state.history           = []
+if "prompt_text"       not in st.session_state: st.session_state.prompt_text       = ""
+if "gemini_key"        not in st.session_state: st.session_state.gemini_key        = ""
+if "groq_key"          not in st.session_state: st.session_state.groq_key          = ""
+if "temperature"       not in st.session_state: st.session_state.temperature       = 0.7
+if "max_tokens"        not in st.session_state: st.session_state.max_tokens        = 1024
+if "_pending_template" not in st.session_state: st.session_state._pending_template = None
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -368,7 +360,9 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-# ─── Resolve sidebar values from session state (always available, even when sidebar is collapsed) ───
+# ─── Resolve sidebar values from session state ────────────────────────────────
+# All four values live in session_state so they're always defined even when
+# the sidebar is collapsed and its widget code doesn't execute.
 gemini_key  = st.session_state.gemini_key
 groq_key    = st.session_state.groq_key
 temperature = st.session_state.temperature
@@ -397,7 +391,8 @@ with st.expander("📋 Prompt Templates", expanded=False):
     tc = st.columns(len(TEMPLATES))
     for i, (label, text) in enumerate(TEMPLATES.items()):
         if tc[i].button(label, key=f"t{i}"):
-            st.session_state.load_template = text
+            # Store in a staging key; we apply it to the widget BEFORE it renders below
+            st.session_state._pending_template = text
             st.rerun()
 
 # ─── System Prompt ─────────────────────────────────────────────────────────────
@@ -410,11 +405,13 @@ with st.expander("⚙️ System Prompt (optional)", expanded=False):
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ─── Prompt Input ──────────────────────────────────────────────────────────────
-# Apply any pending template selection BEFORE the widget is created
-if st.session_state.load_template is not None:
-    st.session_state["main_p"]         = st.session_state.load_template
-    st.session_state.prompt_text       = st.session_state.load_template
-    st.session_state.load_template     = None
+# If a template was just chosen, inject it into the widget key BEFORE st.text_area
+# creates the widget. Streamlit reads session_state["main_p"] at instantiation time,
+# so this is the only moment the value can be overridden programmatically.
+if st.session_state._pending_template is not None:
+    st.session_state["main_p"]         = st.session_state._pending_template
+    st.session_state.prompt_text       = st.session_state._pending_template
+    st.session_state._pending_template = None
 
 if "main_p" not in st.session_state:
     st.session_state["main_p"] = st.session_state.prompt_text
@@ -422,7 +419,6 @@ if "main_p" not in st.session_state:
 prompt = st.text_area("Prompt", height=130,
     placeholder="Type your question here — sent to all three models simultaneously…",
     label_visibility="collapsed", key="main_p")
-# Keep prompt_text in sync with any manual edits
 st.session_state.prompt_text = prompt
 
 bc, sc = st.columns([1, 5])
